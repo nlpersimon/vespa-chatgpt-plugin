@@ -8,6 +8,11 @@ packages = [{include = "vespa_plugin"}]
 
 [tool.poetry.dependencies]
 python = "~3.10"
+fastapi = "^0.95.2"
+uvicorn = "^0.22.0"
+pinecone-client = "^2.2.1"
+tenacity = "^8.2.2"
+arrow = "^1.2.3"
 
 
 [build-system]
