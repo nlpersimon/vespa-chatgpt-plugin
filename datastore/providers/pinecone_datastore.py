@@ -6,6 +6,7 @@ import asyncio
 
 from datastore.datastore import DataStore
 from models.models import (
+    DocumentChunk,
     DocumentChunkMetadata,
     DocumentChunkWithScore,
     DocumentMetadataFilter,
@@ -62,6 +63,48 @@ class PineconeDataStore(DataStore):
             except Exception as e:
                 print(f"Error connecting to index {PINECONE_INDEX}: {e}")
                 raise e
+
+    @retry(wait=wait_random_exponential(min=1, max=20), stop=stop_after_attempt(3))
+    async def _upsert(self, chunks: Dict[str, List[DocumentChunk]]) -> List[str]:
+        """
+        Takes in a dict from document id to list of document chunks and inserts them into the index.
+        Return a list of document ids.
+        """
+        # Initialize a list of ids to return
+        doc_ids: List[str] = []
+        # Initialize a list of vectors to upsert
+        vectors = []
+        # Loop through the dict items
+        for doc_id, chunk_list in chunks.items():
+            # Append the id to the ids list
+            doc_ids.append(doc_id)
+            print(f"Upserting document_id: {doc_id}")
+            for chunk in chunk_list:
+                # Create a vector tuple of (id, embedding, metadata)
+                # Convert the metadata object to a dict with unix timestamps for dates
+                pinecone_metadata = self._get_pinecone_metadata(chunk.metadata)
+                # Add the text and document id to the metadata dict
+                pinecone_metadata["text"] = chunk.text
+                pinecone_metadata["document_id"] = doc_id
+                vector = (chunk.id, chunk.embedding, pinecone_metadata)
+                vectors.append(vector)
+
+        # Split the vectors list into batches of the specified size
+        batches = [
+            vectors[i: i + UPSERT_BATCH_SIZE]
+            for i in range(0, len(vectors), UPSERT_BATCH_SIZE)
+        ]
+        # Upsert each batch to Pinecone
+        for batch in batches:
+            try:
+                print(f"Upserting batch of size {len(batch)}")
+                self.index.upsert(vectors=batch)
+                print(f"Upserted batch successfully")
+            except Exception as e:
+                print(f"Error upserting batch: {e}")
+                raise e
+
+        return doc_ids
 
     @retry(wait=wait_random_exponential(min=1, max=20), stop=stop_after_attempt(3))
     async def _query(
@@ -151,3 +194,22 @@ class PineconeDataStore(DataStore):
                     pinecone_filter[field] = value
 
         return pinecone_filter
+
+    def _get_pinecone_metadata(
+            self, metadata: Optional[DocumentChunkMetadata] = None
+    ) -> Dict[str, Any]:
+        if metadata is None:
+            return {}
+
+        pinecone_metadata = {}
+
+        # For each field in the Metadata, check if it has a value and add it to the pinecone metadata dict
+        # For fields that are dates, convert them to unix timestamps
+        for field, value in metadata.dict().items():
+            if value is not None:
+                if field in ["created_at"]:
+                    pinecone_metadata[field] = to_unix_timestamp(value)
+                else:
+                    pinecone_metadata[field] = value
+
+        return pinecone_metadata

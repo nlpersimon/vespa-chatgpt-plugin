@@ -4,6 +4,8 @@ from fastapi import FastAPI, HTTPException, Depends, Body
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 
 from models.api import (
+    UpsertRequest,
+    UpsertResponse,
     QueryRequest,
     QueryResponse,
 )
@@ -21,6 +23,21 @@ def validate_token(credentials: HTTPAuthorizationCredentials = Depends(bearer_sc
 
 
 app = FastAPI(dependencies=[Depends(validate_token)])
+
+
+@app.post(
+    "/upsert",
+    response_model=UpsertResponse,
+)
+async def upsert(
+    request: UpsertRequest = Body(...),
+):
+    try:
+        ids = await datastore.upsert(request.documents)
+        return UpsertResponse(ids=ids)
+    except Exception as e:
+        print("Error:", e)
+        raise HTTPException(status_code=500, detail="Internal Service Error")
 
 
 @app.post(
